@@ -4,33 +4,94 @@
 
 FwBox_DualRfUart::FwBox_DualRfUart()
 {
+  //
+  // Default : SoftwareSerial
+  //
   FwBox_DualRfUart::SerialSensor = 0;
+  FwBox_DualRfUart::SerialType = SERIAL_TYPE_SOFTWARE;
+
+  FwBox_DualRfUart::SingleDual = RF_UART_SINGLE;
 }
 
 FwBox_DualRfUart::FwBox_DualRfUart(SoftwareSerial* serialSensor)
 {
   FwBox_DualRfUart::SerialSensor = serialSensor;
+  FwBox_DualRfUart::SerialType = SERIAL_TYPE_SOFTWARE;
+
+  FwBox_DualRfUart::SingleDual = RF_UART_SINGLE;
+}
+
+FwBox_DualRfUart::FwBox_DualRfUart(HardwareSerial* serialSensor)
+{
+  FwBox_DualRfUart::SerialSensor = serialSensor;
+  FwBox_DualRfUart::SerialType = SERIAL_TYPE_HARDWARE;
+
+  FwBox_DualRfUart::SingleDual = RF_UART_SINGLE;
 }
 
 FwBox_DualRfUart::~FwBox_DualRfUart()
 {
 }
 
-void FwBox_DualRfUart::begin()
+void FwBox_DualRfUart::setSingleDual(int singleDual)
 {
-  FwBox_DualRfUart::SerialSensor = new SoftwareSerial(13, 15); // RX:D7, TX:D8
-  FwBox_DualRfUart::SerialSensor->begin(9600);
+  FwBox_DualRfUart::SingleDual = singleDual;
 }
 
-RF_DATA_FORMAT* FwBox_DualRfUart::getData()
+void FwBox_DualRfUart::begin()
 {
-  return (RF_DATA_FORMAT*)&(FwBox_DualRfUart::RfData[0]);
+  if (FwBox_DualRfUart::SerialSensor == 0) {
+    //
+    // Default : SoftwareSerial
+    //
+    FwBox_DualRfUart::SerialType = SERIAL_TYPE_SOFTWARE;
+    FwBox_DualRfUart::SerialSensor = new SoftwareSerial(13, 15); // RX:D7, TX:D8
+    SoftwareSerial* pss = (SoftwareSerial*)(FwBox_DualRfUart::SerialSensor);
+    pss->begin(9600);
+  }
+  else {
+    if (FwBox_DualRfUart::SerialType == SERIAL_TYPE_SOFTWARE) {
+      SoftwareSerial* pss = (SoftwareSerial*)(FwBox_DualRfUart::SerialSensor);
+      pss->begin(9600);
+    }
+    else {
+      HardwareSerial* pss = (HardwareSerial*)(FwBox_DualRfUart::SerialSensor);
+      pss->begin(9600);
+    }
+  }
+}
+
+void FwBox_DualRfUart::begin(const int pinRx, const int pinTx)
+{
+  //
+  // Default : SoftwareSerial
+  //
+  FwBox_DualRfUart::SerialType = SERIAL_TYPE_SOFTWARE;
+  FwBox_DualRfUart::SerialSensor = new SoftwareSerial(pinRx, pinTx);
+  SoftwareSerial* pss = (SoftwareSerial*)(FwBox_DualRfUart::SerialSensor);
+  pss->begin(9600);
+}
+
+RF_DATA_FORMAT_SINGLE* FwBox_DualRfUart::getDataSingle()
+{
+  return (RF_DATA_FORMAT_SINGLE*)&(FwBox_DualRfUart::RfData[0]);
+}
+
+RF_DATA_FORMAT_DUAL* FwBox_DualRfUart::getDataDual()
+{
+  return (RF_DATA_FORMAT_DUAL*)&(FwBox_DualRfUart::RfData[0]);
 }
 
 void FwBox_DualRfUart::getAddressKey(char* buffer)
 {
-  RF_DATA_FORMAT* p_rf = FwBox_DualRfUart::getData();
-  sprintf(buffer, "%02X%02X%02X", p_rf->ADDRESS2, p_rf->ADDRESS1, p_rf->KEY);
+  if (FwBox_DualRfUart::SingleDual == RF_UART_SINGLE) {
+    RF_DATA_FORMAT_SINGLE* p_rf = FwBox_DualRfUart::getDataSingle();
+    sprintf(buffer, "%02X%02X%02X", p_rf->ADDRESS2, p_rf->ADDRESS1, p_rf->KEY);
+  }
+  else {
+    RF_DATA_FORMAT_DUAL* p_rf = FwBox_DualRfUart::getDataDual();
+    sprintf(buffer, "%02X%02X%02X", p_rf->ADDRESS2, p_rf->ADDRESS1, p_rf->KEY);
+  }
 }
 
 bool FwBox_DualRfUart::handle()
@@ -66,6 +127,17 @@ bool FwBox_DualRfUart::handle()
 
 //
 // Data format :
+//
+//     ***RF_UART_SINGLE***
+//     Offset  Data  Description
+//     0       0xfd  header
+//     2             Address 2
+//     3             Address 1
+//     4             Key
+//     5             Signal Width
+//     6       0xdf  Tailer
+//
+//     ***RF_UART_DUAL***
 //     Offset  Data  Description
 //     0       0xfd  header
 //     1             Frequency - 0xf3:315M, 0xf4:433M
@@ -77,38 +149,27 @@ bool FwBox_DualRfUart::handle()
 //
 bool FwBox_DualRfUart::parseData(char* data, int currentIndex)
 {
-  int start_pos = currentIndex - 6;
-  RF_DATA_FORMAT* p_rf = (RF_DATA_FORMAT*)(&(data[start_pos]));
-  if((p_rf->SIG_FD == 0xfd) &&(p_rf->SIG_DF == 0xdf)) {
-/*
-    UnifiedLcd.setCursor(0, 0);
-    if(p_rf->FREQ == 0xf3) {
-      UnifiedLcd.print("315M ");
-      Serial.print("315M ");
-    }
-    else if(p_rf->FREQ == 0xf4) {
-      UnifiedLcd.print("433M ");
-      Serial.print("433M ");
-    }
+  int start_pos = currentIndex - 5;
 
-    UnifiedLcd.print(p_rf->ADDRESS2, HEX);
-    UnifiedLcd.print(" ");
-    UnifiedLcd.print(p_rf->ADDRESS1, HEX);
-    UnifiedLcd.print(" ");
-    UnifiedLcd.print(p_rf->KEY, HEX);
-    UnifiedLcd.print(" ");
-    UnifiedLcd.print(p_rf->PARAM, HEX);
-    UnifiedLcd.print("     ");
+  if (FwBox_DualRfUart::SingleDual == RF_UART_SINGLE)
+    start_pos = currentIndex - 5;
+  else
+    start_pos = currentIndex - 6;
 
-    Serial.print(p_rf->ADDRESS2, HEX);
-    Serial.print(" ");
-    Serial.print(p_rf->ADDRESS1, HEX);
-    Serial.print(" ");
-    Serial.print(p_rf->KEY, HEX);
-    Serial.print(" ");
-    Serial.println(p_rf->PARAM, HEX);
-*/
-    return true;
+  if (start_pos < 0)
+    return false;
+
+  if (FwBox_DualRfUart::SingleDual == RF_UART_SINGLE) {
+    RF_DATA_FORMAT_SINGLE* p_rf = (RF_DATA_FORMAT_SINGLE*)(&(data[start_pos]));
+    if((p_rf->SIG_FD == 0xfd) &&(p_rf->SIG_DF == 0xdf)) {
+      return true;
+    }
+  }
+  else {
+    RF_DATA_FORMAT_DUAL* p_rf = (RF_DATA_FORMAT_DUAL*)(&(data[start_pos]));
+    if((p_rf->SIG_FD == 0xfd) &&(p_rf->SIG_DF == 0xdf)) {
+      return true;
+    }
   }
 
   return false;
